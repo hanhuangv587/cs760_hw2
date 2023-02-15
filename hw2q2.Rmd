@@ -1,0 +1,419 @@
+---
+title: "Untitled"
+output: html_document
+date: "2023-02-14"
+---
+
+```{r}
+library(tidyverse)
+library(data.table)
+Druns <- as.data.table(read_table("Druns.txt", col_names = c("x1","x2","y")))
+D1 <- as.data.table(read_table("D1.txt", col_names = c("x1","x2","y")))
+D2 <- as.data.table(read_table("D2.txt", col_names = c("x1","x2","y")))
+Dbig <- as.data.table(read_table("Dbig.txt", col_names = c("x1","x2","y")))
+D3leaves <- as.data.table(read_table("D3leaves.txt", col_names = c("x1","x2","y")))
+```
+
+```{r}
+infogain <- function(y,yl,yr){
+  ny <- length(y)
+  ny0 <- sum(y == 0)
+  ny1 <- ny - ny0
+  info <- - ny0/ny * log(ny0/ny,2) - ny1/ny * log(ny1/ny,2)
+  
+  nyl <- length(yl)
+  nyl0 <- sum(yl == 0)
+  nyl1 <- nyl - nyl0
+  
+  nyr <- length(yr)
+  nyr0 <- sum(yr == 0)
+  nyr1 <- nyr - nyr0
+  
+  infol <- ifelse(nyl0 == 0 | nyl1 == 0,0,- nyl0/nyl * log(nyl0/nyl,2) - nyl1/nyl * log(nyl1/nyl,2))
+  infor <- ifelse(nyr0 == 0 | nyr1 == 0,0,- nyr0/nyr * log(nyr0/nyr,2) - nyr1/nyr * log(nyr1/nyr,2))
+  
+  hs <- -nyl/ny * log(nyl/ny,2) - nyr/ny * log(nyr/ny,2)
+  gain <- ( info - (nyl/ny*infol+nyr/ny*infor)) / hs
+  return(gain)
+}
+
+MakeSubtree <- function(data){
+  
+  candidate1 <- unique(data$x1)
+  candidate2 <- unique(data$x2)
+  
+  if (n_distinct(data$y)==1) {
+    return(c("leaf",data$y[1]))
+  }
+  
+  info_gain1 <- c()
+  info_gain2 <- c()
+  for (c in candidate1) {
+    left  <- data[x1 >= c]
+    right <- data[x1 <  c]
+    if (nrow(left) != 0 & nrow(right) != 0) {
+      info_gain1 <- c(info_gain1,infogain(data$y,left$y,right$y))
+    }
+    else{
+      info_gain1 <- c(info_gain1,0)
+    }
+  }
+  for (c in candidate2) {
+    left  <- data[x2 >= c]
+    right <- data[x2 <  c]
+    if (nrow(left) != 0 & nrow(right) != 0) {
+      info_gain2 <- c(info_gain2,infogain(data$y,left$y,right$y))
+    }
+    else{
+      info_gain2 <- c(info_gain2,0)
+    }
+  }
+  c1 <- max(info_gain1)
+  c2 <- max(info_gain2)
+  if (c1 == 0 & c2 == 0) {
+    n1 <- sum(data$y == 1)
+    n0 <- sum(data$y == 0)
+    if (n1 >= n0) {
+      return(c("leaf",1))
+    }
+    else{
+      return(c("leaf",0))
+    }
+  }
+  if (c1 >= c2) {
+    s <- candidate1[which.max(info_gain1)]
+    return(c("node1",s))
+  }
+  else{
+    s <- candidate2[which.max(info_gain2)]
+    return(c("node2",s))
+  }
+}
+
+DecisionTree <- function(data,level = 0,prev = 0,prev_con = "+"){
+  if (level == 0) {
+    id <<- 0
+    result <<- setNames(data.table(matrix(ncol = 5, nrow = 0)), c("id", "prev_id", "type", "value", "prev_condition"))
+  }
+  sub <- MakeSubtree(data)
+  value <- as.numeric(sub[2])
+  if (sub[1] == "leaf") {
+    print(paste("Leaf:",id, ",previous node:", prev, prev_con,",predict label:", value ,"  (level:",level,")"))
+    result <<- rbindlist(list(result,data.table("id" = id, "prev_id" = prev, "type" = "leaf","value" = value, "prev_condition" = prev_con)))
+    id <<- id + 1
+  }
+  if (sub[1] == "node1") {
+    if (level == 0) {
+      print(paste("Root: cut at x1 >= ",value,"  (level:",level,")"))
+      result <<- rbindlist(list(result,data.table("id" = 0, "prev_id" = -1, "type" = "node1","value" = value, "prev_condition" = " ")))
+    }
+    else {
+      print(paste("Node:", id, ",previous node:", prev, prev_con, ",cut at x1 >= ",value,"  (level:",level,")"))
+      result <<- rbindlist(list(result,data.table("id" = id, "prev_id" = prev, "type" = "node1","value" = value, "prev_condition" = prev_con)))
+    }
+    prev <- id
+    id <<- id + 1
+    c1 <- data[x1 >= value]
+    c2 <- data[x1 <  value]
+    DecisionTree(c1,level+1,prev,"+")
+    DecisionTree(c2,level+1,prev,"-")
+  }
+  if (sub[1] == "node2") {
+    if (level == 0) {
+      print(paste("Root, cut at x2 = ",value,"  (level:",level,")"))
+      result <<- rbindlist(list(result,data.table("id" = 0, "prev_id" = -1, "type" = "node2","value" = value, "prev_condition" = " ")))
+    }
+    else {
+      print(paste("Node:", id, ",previous node:", prev, prev_con, ",cut at x2 >= ",value,"  (level:",level,")"))
+      result <<- rbindlist(list(result,data.table("id" = id, "prev_id" = prev, "type" = "node2","value" = value, "prev_condition" = prev_con)))
+    }
+    prev <- id
+    id <<- id + 1
+    c1 <- data[x2 >= value]
+    c2 <- data[x2 <  value]
+    DecisionTree(c1,level+1,prev,"+")
+    DecisionTree(c2,level+1,prev,"-")
+  }
+}
+
+TreePrediction <- function(data, tree, data_id = 0){
+  rule <- tree[id == data_id]
+  if (rule$type == "leaf") {
+    return(rule$value)
+  }
+  if (rule$type == "node1") {
+    if (data$x1 >= rule$value) {
+      data_id = (tree[prev_id == data_id & prev_condition == "+"])$id
+      return(TreePrediction(data, tree, data_id))
+    }
+    else{
+      data_id = (tree[prev_id == data_id & prev_condition == "-"])$id
+      return(TreePrediction(data, tree, data_id))
+    }
+  }
+  if (rule$type == "node2") {
+    if (data$x2 >= rule$value) {
+      data_id = (tree[prev_id == data_id & prev_condition == "+"])$id
+      return(TreePrediction(data, tree, data_id))
+    }
+    else{
+      data_id = (tree[prev_id == data_id & prev_condition == "-"])$id
+      return(TreePrediction(data, tree, data_id))
+    }
+  }
+}
+
+TreePred <- function(dataset, tree){
+  pred <- {}
+  for (i in 1:nrow(dataset)) {
+    pred <- c(pred,TreePrediction(dataset[i,],tree))
+  }
+  return(pred)
+}
+
+id <- 0
+```
+
+```{r}
+DecisionTree(D3leaves)
+```
+
+
+```{r}
+DecisionTree(D1)
+result_D1 <- result 
+```
+
+```{r}
+DecisionTree(D2)
+result_D2 <- result
+```
+
+```{r}
+table(D2$y,TreePred(D2,result_D2))
+```
+
+
+# Random sample
+
+```{r}
+set.seed(53706)
+index <- sample(nrow(Dbig),8192)
+D3_train8192 <- Dbig[index, ]
+D3_test <- Dbig[-index, ]
+
+index <- sample(nrow(D3_train8192),2048)
+D3_train2048 <- D3_train8192[index, ]
+index <- sample(nrow(D3_train8192),512)
+D3_train512 <- D3_train8192[index, ]
+index <- sample(nrow(D3_train8192),128)
+D3_train128 <- D3_train8192[index, ]
+index <- sample(nrow(D3_train8192),32)
+D3_train32 <- D3_train8192[index, ]
+```
+
+
+```{r}
+DecisionTree(D3_train8192)
+result_D3_8192 <- result
+D3_test$pred_8192 <- TreePred(D3_test,result_D3_8192)
+table(D3_test$y,D3_test$pred_8192)
+```
+
+
+```{r}
+DecisionTree(D3_train2048)
+result_D3_2048 <- result
+D3_test$pred_2048 <- TreePred(D3_test,result_D3_2048)
+table(D3_test$y,D3_test$pred_2048)
+```
+
+```{r}
+
+DecisionTree(D3_train512)
+result_D3_512 <- result
+D3_test$pred_512 <- TreePred(D3_test,result_D3_512)
+table(D3_test$y,D3_test$pred_512)
+```
+
+```{r}
+DecisionTree(D3_train128)
+result_D3_128 <- result
+D3_test$pred_128 <- TreePred(D3_test,result_D3_128)
+table(D3_test$y,D3_test$pred_128)
+```
+
+```{r}
+
+DecisionTree(D3_train32)
+result_D3_32 <- result
+D3_test$pred_32 <- TreePred(D3_test,result_D3_32)
+table(D3_test$y,D3_test$pred_32)
+```
+
+```{r}
+sum(D3_test$y != D3_test$pred_8192) / nrow(D3_test)
+sum(D3_test$y != D3_test$pred_2048) / nrow(D3_test)
+sum(D3_test$y != D3_test$pred_512) / nrow(D3_test)
+sum(D3_test$y != D3_test$pred_128) / nrow(D3_test)
+sum(D3_test$y != D3_test$pred_32) / nrow(D3_test)
+```
+
+```{r}
+nrow(result_D3_8192)
+nrow(result_D3_2048)
+nrow(result_D3_512)
+nrow(result_D3_128)
+nrow(result_D3_32)
+```
+
+```{r}
+test_result <- data.table("n" = c(32,128,512,2048,8192), "n_node" = c(13,29,67,127,261), "err %" = c(13.61,11.78,6.36,2.88,1.11)/100)
+test_result
+```
+
+```{r}
+test_result2 <- data.table("n" = c(32,128,512,2048,8192), "n_node" = c(15,15,15,15,15), "err %" = c(24.12,11.00,5.310,2.323,1.383)/100)
+test_result2
+```
+
+
+```{r}
+ggplot(D1) +
+  aes(x = x1, y = x2, colour = y) +
+  geom_point(shape = "circle", size = 1.5) +
+  scale_color_gradient() +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplot(D2) +
+  aes(x = x1, y = x2, colour = y) +
+  geom_point(shape = "circle", size = 1.5) +
+  scale_color_gradient() +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplot(test_result) +
+  aes(x = n, y = `err %`) +
+  geom_line(colour = "#112446") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(test_result2) +
+  aes(x = n, y = `err %`) +
+  geom_line(colour = "#112446") +
+  theme_minimal()
+```
+
+```{r}
+test_df1 <- data.table(x1 = rep(seq(0,1,length.out = 101), each = 101), x2 = rep(seq(0,1,length.out = 101),101))
+test_df1$pred <- TreePred(test_df1,result_D1)
+
+ggplot(test_df1) +
+  aes(x = x1, y = x2, colour = pred) +
+  geom_point(shape = "square", size = 2L) +
+  scale_color_gradient() +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+test_df <- data.table(x1 = rep(seq(0,1,length.out = 101), each = 101), x2 = rep(seq(0,1,length.out = 101),101))
+test_df$pred <- TreePred(test_df,result_D2)
+
+ggplot(test_df) +
+  aes(x = x1, y = x2, colour = pred) +
+  geom_point(shape = "square", size = 2L) +
+  scale_color_gradient() +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+```{r}
+test_df <- data.table(x1 = rep(seq(-1.5,1.5,length.out = 101), each = 101), x2 = rep(seq(-1.5,1.5,length.out = 101),101))
+test_df$pred32 <- TreePred(test_df,result_D3_32)
+
+ggplot(test_df) +
+  aes(x = x1, y = x2, colour = pred32) +
+  geom_point(shape = "square", size = 2L) +
+  scale_color_gradient() +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+test_df$pred128 <- TreePred(test_df,result_D3_128)
+
+ggplot(test_df) +
+  aes(x = x1, y = x2, colour = pred128) +
+  geom_point(shape = "square", size = 2L) +
+  scale_color_gradient() +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+test_df$pred512 <- TreePred(test_df,result_D3_512)
+
+ggplot(test_df) +
+  aes(x = x1, y = x2, colour = pred512) +
+  geom_point(shape = "square", size = 2L) +
+  scale_color_gradient() +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+test_df$pred2048 <- TreePred(test_df,result_D3_2048)
+
+ggplot(test_df) +
+  aes(x = x1, y = x2, colour = pred2048) +
+  geom_point(shape = "square", size = 2L) +
+  scale_color_gradient() +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+```{r}
+test_df$pred8192 <- TreePred(test_df,result_D3_8192)
+
+ggplot(test_df) +
+  aes(x = x1, y = x2, colour = pred8192) +
+  geom_point(shape = "square", size = 2L) +
+  scale_color_gradient() +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
